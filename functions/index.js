@@ -16,46 +16,84 @@ async function getGithubToken() {
     return version.payload.data.toString();
   } catch (error) {
     console.error('Error getting GitHub token:', error);
-    throw error;
+    throw new functions.https.HttpsError('internal', 'Failed to get GitHub token: ' + error.message);
   }
 }
 
 exports.processCode = functions.https.onCall(async (data, context) => {
   try {
-    console.log('Received data:', JSON.stringify(data));
+    // Log received data
+    console.log('Received data:', JSON.stringify(data, null, 2));
     
-    if (!data || !data.code) {
-      throw new Error('No code provided');
+    // Validate input
+    if (!data) {
+      throw new functions.https.HttpsError('invalid-argument', 'No data provided');
+    }
+    
+    if (!data.code) {
+      throw new functions.https.HttpsError('invalid-argument', 'No code provided');
+    }
+    
+    if (!data.fileName) {
+      throw new functions.https.HttpsError('invalid-argument', 'No fileName provided');
+    }
+    
+    if (!data.path) {
+      throw new functions.https.HttpsError('invalid-argument', 'No path provided');
     }
 
-    const { code, fileName, path } = data;
-    console.log(`Processing file: ${fileName} at path: ${path}`);
-    
     // Get GitHub token
     const token = await getGithubToken();
-    console.log('Got GitHub token');
-    
-    const octokit = new Octokit({ auth: token });
+    console.log('Successfully got GitHub token');
 
-    // Create or update file in GitHub
-    const response = await octokit.rest.repos.createOrUpdateFileContents({
-      owner: "jstarr",  // Replace with your GitHub username
-      repo: "deploy-helper",
-      path: path,
-      message: `Update ${fileName} via Deploy Helper`,
-      content: Buffer.from(code).toString('base64'),
-      branch: "main"
+    // Initialize Octokit
+    const octokit = new Octokit({
+      auth: token
     });
 
-    console.log('GitHub API Response:', JSON.stringify(response.data));
+    try {
+      // Try to get the file first to check if it exists
+      let existingFile;
+      try {
+        const { data: fileData } = await octokit.rest.repos.getContent({
+          owner: "jstarr",
+          repo: "deploy-helper",
+          path: data.path,
+          ref: "main"
+        });
+        existingFile = fileData;
+      } catch (e) {
+        // File doesn't exist, which is fine
+        console.log('File does not exist yet, will create new one');
+      }
 
-    return {
-      success: true,
-      message: `File ${fileName} processed successfully`,
-      sha: response.data.content.sha
-    };
+      // Create or update the file
+      const response = await octokit.rest.repos.createOrUpdateFileContents({
+        owner: "jstarr",
+        repo: "deploy-helper",
+        path: data.path,
+        message: `Update ${data.fileName} via Deploy Helper`,
+        content: Buffer.from(data.code).toString('base64'),
+        branch: "main",
+        ...(existingFile && { sha: existingFile.sha })
+      });
+
+      console.log('GitHub API Response:', JSON.stringify(response.data, null, 2));
+
+      return {
+        success: true,
+        message: `File ${data.fileName} processed successfully`,
+        sha: response.data.content.sha
+      };
+    } catch (gitError) {
+      console.error('GitHub API Error:', gitError);
+      throw new functions.https.HttpsError('aborted', 'GitHub API Error: ' + gitError.message);
+    }
   } catch (error) {
     console.error('Error in processCode:', error);
+    if (error instanceof functions.https.HttpsError) {
+      throw error;
+    }
     throw new functions.https.HttpsError('internal', error.message);
   }
 });

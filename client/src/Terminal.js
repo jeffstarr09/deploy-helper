@@ -1,106 +1,65 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { getDatabase, ref, onValue, push, serverTimestamp } from 'firebase/database';
+import { app } from './firebase';
 
 const Terminal = () => {
   const [command, setCommand] = useState('');
-  const [output, setOutput] = useState(['Welcome to Terminal Helper']);
-  const [cwd, setCwd] = useState('');
+  const [output, setOutput] = useState(['Welcome to Deploy Helper']);
   const [connected, setConnected] = useState(false);
-  const [ws, setWs] = useState(null);
   const outputRef = useRef(null);
 
   useEffect(() => {
-    let socket = null;
-    
-    const connectWebSocket = () => {
-      console.log('Attempting to connect to WebSocket...');
-      socket = new WebSocket('ws://localhost:8081');
+    try {
+      const db = getDatabase(app);
+      const terminalRef = ref(db, 'terminal');
       
-      socket.onopen = () => {
-        console.log('WebSocket Connected');
-        setConnected(true);
-        setWs(socket);
-        addOutput('Terminal connected successfully');
-      };
-
-      socket.onmessage = (event) => {
-        console.log('Received message:', event.data);
-        try {
-          const data = JSON.parse(event.data);
-          if (data.type === 'output') {
-            addOutput(`$ ${data.command}`);
-            addOutput(data.output || 'Command completed');
-          }
-        } catch (error) {
-          console.error('Error parsing message:', error);
-          addOutput(`Error: ${error.message}`);
+      setConnected(true);
+      
+      const unsubscribe = onValue(terminalRef, (snapshot) => {
+        const data = snapshot.val();
+        if (data && data.messages) {
+          const messages = Object.values(data.messages)
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .map(m => m.text);
+          setOutput(messages.slice(-50)); // Keep last 50 messages
         }
-      };
-
-      socket.onclose = () => {
-        console.log('WebSocket Disconnected');
-        setConnected(false);
-        setWs(null);
-        addOutput('Terminal disconnected - attempting to reconnect...');
-        setTimeout(connectWebSocket, 3000);
-      };
-
-      socket.onerror = (error) => {
-        console.error('WebSocket Error:', error);
-        addOutput('Error connecting to terminal server');
-      };
-    };
-
-    connectWebSocket();
-
-    fetch('http://localhost:3001/cwd')
-      .then(res => res.json())
-      .then(data => {
-        console.log('Got working directory:', data);
-        setCwd(data.cwd || process.cwd());
-        addOutput(`Current directory: ${data.cwd}`);
-      })
-      .catch(err => {
-        console.error('Error getting working directory:', err);
-        setCwd(process.cwd());
       });
 
-    return () => {
-      if (socket) {
-        console.log('Cleaning up WebSocket connection');
-        socket.close();
-      }
-    };
+      return () => {
+        unsubscribe();
+        setConnected(false);
+      };
+    } catch (error) {
+      console.error('Database connection error:', error);
+      setConnected(false);
+    }
   }, []);
 
-  const addOutput = (text) => {
-    setOutput(prev => [...prev, text]);
-    setTimeout(() => {
-      if (outputRef.current) {
-        outputRef.current.scrollTop = outputRef.current.scrollHeight;
-      }
-    }, 0);
+  const addOutput = async (text) => {
+    try {
+      const db = getDatabase(app);
+      const messagesRef = ref(db, 'terminal/messages');
+      await push(messagesRef, {
+        text,
+        timestamp: serverTimestamp()
+      });
+    } catch (error) {
+      console.error('Error adding output:', error);
+      setOutput(prev => [...prev, `Error: ${error.message}`]);
+    }
   };
 
   const executeCommand = async () => {
     if (!command.trim()) return;
 
     try {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: 'command',
-          command,
-          cwd
-        }));
-        addOutput(`$ ${command}`);
-      } else {
-        throw new Error('Terminal not connected');
-      }
+      await addOutput(`$ ${command}`);
+      // Command execution logic will be added here
+      setCommand('');
     } catch (error) {
-      console.error('Error executing command:', error);
-      addOutput(`Error: ${error.message}`);
+      console.error('Command execution error:', error);
+      await addOutput(`Error: ${error.message}`);
     }
-
-    setCommand('');
   };
 
   const handleKeyPress = (e) => {
@@ -114,135 +73,31 @@ const Terminal = () => {
     <div style={{ 
       border: '1px solid #ccc',
       borderRadius: '4px',
-      margin: '20px',
-      backgroundColor: '#1e1e1e'
+      backgroundColor: '#1e1e1e',
+      height: '100%'
     }}>
-      {/* Control Panel */}
+      {/* Status Bar */}
       <div style={{ 
         padding: '10px',
         borderBottom: '1px solid #ccc',
         backgroundColor: '#252526',
-        color: '#fff'
+        color: '#fff',
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center'
       }}>
-        {/* Status Row */}
-        <div style={{ 
-          display: 'flex', 
-          justifyContent: 'space-between', 
-          alignItems: 'center',
-          marginBottom: '10px'
-        }}>
-          <span>Terminal</span>
-          <span>
-            <span style={{
-              height: '8px',
-              width: '8px',
-              borderRadius: '50%',
-              display: 'inline-block',
-              backgroundColor: connected ? '#4CAF50' : '#f44336',
-              marginRight: '8px'
-            }}></span>
-            {connected ? 'Connected' : 'Disconnected'}
-          </span>
-        </div>
-
-        {/* Button Row */}
-        <div style={{ display: 'flex', gap: '10px' }}>
-          <button
-            onClick={() => {
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                addOutput('Starting servers...');
-                ws.send(JSON.stringify({
-                  type: 'command',
-                  command: 'start-servers',
-                  cwd
-                }));
-              }
-            }}
-            style={{
-              backgroundColor: '#4CAF50',
-              color: 'white',
-              border: 'none',
-              padding: '5px 10px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            Start Servers
-          </button>
-
-          <button
-            onClick={() => {
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                addOutput('Stopping servers...');
-                ws.send(JSON.stringify({
-                  type: 'command',
-                  command: 'stop-servers',
-                  cwd
-                }));
-              }
-            }}
-            style={{
-              backgroundColor: '#f44336',
-              color: 'white',
-              border: 'none',
-              padding: '5px 10px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            Stop Servers
-          </button>
-
-          <button
-            onClick={() => {
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                addOutput('Restarting servers...');
-                ws.send(JSON.stringify({
-                  type: 'command',
-                  command: 'restart-servers',
-                  cwd
-                }));
-              }
-            }}
-            style={{
-              backgroundColor: '#2196F3',
-              color: 'white',
-              border: 'none',
-              padding: '5px 10px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            Restart Servers
-          </button>
-
-          <button
-            onClick={() => {
-              if (ws && ws.readyState === WebSocket.OPEN) {
-                addOutput('Starting Firebase deployment...');
-                ws.send(JSON.stringify({
-                  type: 'command',
-                  command: 'firebase-deploy',
-                  cwd
-                }));
-              }
-            }}
-            style={{
-              backgroundColor: '#FFA000',
-              color: 'white',
-              border: 'none',
-              padding: '5px 10px',
-              borderRadius: '4px',
-              cursor: 'pointer',
-              fontSize: '12px'
-            }}
-          >
-            Deploy to Firebase
-          </button>
-        </div>
+        <span>Terminal</span>
+        <span>
+          <span style={{
+            height: '8px',
+            width: '8px',
+            borderRadius: '50%',
+            display: 'inline-block',
+            backgroundColor: connected ? '#4CAF50' : '#f44336',
+            marginRight: '8px'
+          }}></span>
+          {connected ? 'Connected to Firebase' : 'Disconnected'}
+        </span>
       </div>
 
       {/* Terminal Output */}
@@ -275,9 +130,7 @@ const Terminal = () => {
         display: 'flex',
         backgroundColor: '#1e1e1e'
       }}>
-        <span style={{ color: '#4CAF50', marginRight: '8px', fontFamily: 'monospace' }}>
-          {cwd}$
-        </span>
+        <span style={{ color: '#4CAF50', marginRight: '8px', fontFamily: 'monospace' }}>$</span>
         <input
           type="text"
           value={command}

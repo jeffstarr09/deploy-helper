@@ -17,11 +17,12 @@
     "@google-cloud/secret-manager": "^4.0.0",
     "@octokit/rest": "^19.0.0",
     "firebase-admin": "^11.8.0",
-    "firebase-functions": "^4.3.0"
+    "firebase-functions": "^6.2.0"
   },
   "devDependencies": {
     "eslint": "^8.15.0",
     "eslint-config-google": "^0.14.0"
   },
-  "private": true
+  "private": true,
+  "type": "commonjs"
 }

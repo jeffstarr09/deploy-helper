@@ -6,7 +6,6 @@ const CodeImport = () => {
   const [code, setCode] = useState('');
   const [analysis, setAnalysis] = useState(null);
   const [status, setStatus] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
 
   const analyzeCode = (content) => {
     let fileType = 'unknown';
@@ -17,10 +16,10 @@ const CodeImport = () => {
       fileType = 'HTML';
       if (content.includes('game')) {
         fileName = 'game.html';
-        path = 'html/game.html';
+        path = 'public/game.html';
       } else if (content.includes('admin')) {
         fileName = 'admin.html';
-        path = 'html/admin.html';
+        path = 'public/admin.html';
       }
     } else if (content.includes('import React')) {
       fileType = 'React Component';
@@ -41,10 +40,11 @@ const CodeImport = () => {
 
       if (componentName) {
         fileName = `${componentName}.js`;
-        path = `components/${fileName}`;
+        path = `client/src/${fileName}`;
       }
     }
 
+    console.log('Code Analysis:', { fileType, fileName, path, requiresServerRestart: fileType === 'React Component' });
     return {
       fileType,
       fileName,
@@ -57,36 +57,32 @@ const CodeImport = () => {
     const newCode = e.target.value;
     setCode(newCode);
     if (newCode.trim()) {
-      const analysis = analyzeCode(newCode);
-      console.log('Code Analysis:', analysis);
-      setAnalysis(analysis);
+      const analysisResult = analyzeCode(newCode);
+      setAnalysis(analysisResult);
     } else {
       setAnalysis(null);
     }
-    setStatus('');
   };
 
   const handleProcess = async () => {
     if (!code.trim() || !analysis) return;
 
     try {
-      setIsProcessing(true);
       setStatus('Processing code...');
       
-      console.log('Sending data to Firebase:', {
-        fileName: analysis.fileName,
-        path: analysis.path,
-        codeLength: code.length
-      });
-
-      const processCode = httpsCallable(functions, 'processCode');
-      const result = await processCode({
+      // Log the exact data we're sending
+      const dataToSend = {
         code: code,
         fileName: analysis.fileName,
         path: analysis.path
-      });
+      };
+      
+      console.log('Sending to Firebase:', dataToSend);
 
-      console.log('Firebase response:', result.data);
+      const processCode = httpsCallable(functions, 'processCode');
+      const result = await processCode(dataToSend);
+
+      console.log('Function result:', result);
       
       if (result.data.success) {
         setCode('');
@@ -98,8 +94,6 @@ const CodeImport = () => {
     } catch (error) {
       console.error('Error processing code:', error);
       setStatus(`Error: ${error.message}`);
-    } finally {
-      setIsProcessing(false);
     }
   };
 
@@ -170,20 +164,20 @@ const CodeImport = () => {
 
         <button
           onClick={handleProcess}
-          disabled={!code.trim() || !analysis || isProcessing}
+          disabled={!code.trim() || !analysis}
           style={{
             marginTop: '15px',
-            backgroundColor: (code.trim() && analysis && !isProcessing) ? '#4CAF50' : '#666',
+            backgroundColor: code.trim() && analysis ? '#4CAF50' : '#666',
             color: 'white',
             border: 'none',
             padding: '8px 16px',
             borderRadius: '4px',
-            cursor: (code.trim() && analysis && !isProcessing) ? 'pointer' : 'not-allowed',
+            cursor: code.trim() && analysis ? 'pointer' : 'not-allowed',
             fontSize: '14px',
             width: '100%'
           }}
         >
-          {isProcessing ? 'Processing...' : 'Process Code'}
+          Process Code
         </button>
       </div>
     </div>
